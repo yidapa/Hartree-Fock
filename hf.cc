@@ -20,7 +20,6 @@ using namespace std;
 
 std::vector<Atom> read_geometry(char* filename) {
     
-    std::cout << "Will read geometry from " << filename << std::endl;
 
     ifstream is(filename);
     assert(is.good());
@@ -66,11 +65,6 @@ std::vector<Atom> read_geometry(char* filename) {
         atoms[i].z = z * angstrom_to_bohr;
     }
 
-    //Check to see if we have read the file correctly
-    //for(auto int i = 0; i < natom; i ++){
-    //    cout << atoms[i].atomic_number << "\t" << "x- " << atoms[i].x << endl;
-    //}
-
     return atoms;
 }
 
@@ -100,6 +94,100 @@ std::vector<Shell> make_sto3g_basis(std::vector<Atom>& atoms){
     return shells;
 }
 
+MatrixXd overlap(std::vector<Shell>& shells){
+
+    //Number of Orbitals is length of shells
+    //Set up overlap matrix
+    MatrixXd SS = MatrixXd::Zero(shells.size(), shells.size());
+
+    //Populate overlap matrix.
+    for(int i = 0; i < shells.size(); i++){
+        for(int j = 0; j < shells.size(); j++){
+            
+            //Need to sum over inner contractions
+            double s_tmp = 0.0;
+
+            for(int p = 0; p < shells[i].contr.size(); p++){
+                for( int q = 0; q < shells[j].contr.size(); q++){
+                    
+                    //cout << p << "\t" << shells[i].contr[p] << "\t" << q << "\t" << shells[j].contr[q] << endl;
+                    //Guassian 2-center overlap integral is
+                    //[pi/(alpha +
+                    //beta)]^{3/2}Exp[-(alpha*beta)/(alpha+beta)|R_{A} -
+                    //R_{B}|^{2}]
+                    
+                    double t_alpha = shells[i].alpha[p];
+                    double t_beta = shells[j].alpha[q];
+                    
+                    double tmp1 = pow(M_PI / ( t_alpha + t_beta ), 3.0/2.0) ;
+                    
+
+                    double tmp2 = exp( (-1.*t_alpha*t_beta/(t_alpha + t_beta)) * (shells[i].origin - shells[j].origin).squaredNorm() );
+                    
+                    double norm_const1 = pow( 2*t_alpha/M_PI, 3./4.) ;
+                    double norm_const2 = pow( 2*t_beta/M_PI, 3./4.);
+                   
+                    s_tmp += norm_const1*norm_const2*shells[i].contr[p]*shells[j].contr[q]*tmp1*tmp2;
+
+                }
+            }
+
+            SS(i,j) = s_tmp;
+
+        }
+    }
+
+
+    return SS;
+
+}
+
+
+MatrixXd kineticEnergy(std::vector<Shell>& shells){
+
+    //Number of Orbitals is length of shells
+    //Set up overlap matrix
+    MatrixXd TT = MatrixXd::Zero(shells.size(), shells.size());
+
+    //Populate kinetic energy matrix.
+    for(int i = 0; i < shells.size(); i++){
+        for(int j = 0; j < shells.size(); j++){
+            
+            //Need to sum over inner contractions
+            double t_tmp = 0.0;
+
+            for(int p = 0; p < shells[i].contr.size(); p++){
+                for( int q = 0; q < shells[j].contr.size(); q++){
+                    
+                    double t_alpha = shells[i].alpha[p];
+                    double t_beta = shells[j].alpha[q];
+                   
+                    double tmp = t_alpha*t_beta/(t_alpha + t_beta);
+                    double tmp1 = pow(M_PI / ( t_alpha + t_beta ), 3.0/2.0) ;
+                    
+                    double tmp2 = exp( -1*tmp  * (shells[i].origin - shells[j].origin).squaredNorm() );
+                    double tmp3 = 3 - 2*tmp*(shells[i].origin - shells[j].origin).squaredNorm();
+                    double n_const_1 = pow( 2*t_alpha/M_PI, 3./4.) ;
+                    double n_const_2 = pow( 2*t_beta/M_PI, 3./4.);
+                   
+                    t_tmp += n_const_1*n_const_2*tmp*tmp3*tmp1*tmp2*shells[i].contr[p]*shells[j].contr[q];
+
+                }
+            }
+
+            TT(i,j) = t_tmp;
+        }
+    }
+
+    return TT;
+}
+
+void nucElec(std::vector<Shell>& shells, std::vector<Atom>& atoms){
+
+    //Compute with Fourier transform mathod
+   
+}
+
 
 
 int main(int argc, char* argv[]){
@@ -124,7 +212,6 @@ int main(int argc, char* argv[]){
             double xij = atoms[i].x - atoms[j].x;
             double yij = atoms[i].y - atoms[j].y;
             double zij = atoms[i].z - atoms[j].z;
-            cout << xij << "\t" << yij << "\t" << zij << endl;
             double r2 = xij*xij + yij*yij + zij*zij;
             double r = sqrt(r2);
             enuc += atoms[i].atomic_number * atoms[j].atomic_number / r;
@@ -136,9 +223,13 @@ int main(int argc, char* argv[]){
     std::vector<Shell> shells = make_sto3g_basis(atoms); 
 
     //COMPUTE OVERLAPS
-    MatrixXd D = MatrixXd::Zero(2,2);
+    MatrixXd SS = overlap(shells);
 
-    cout << D << endl;
+    //Compute Kinetic Energy
+    MatrixXd TT =kineticEnergy(shells);
+
+    //Compute Nuclear-electron attraction
+    nucElec(shells, atoms);
 
 
 
