@@ -80,9 +80,9 @@ std::vector<Shell> make_sto3g_basis(std::vector<Atom>& atoms){
     Eigen::VectorXd contrcoef(3);;
     contrcoef << 0.444635, 0.535328, 0.154329;
     Eigen::VectorXd A(3);
-    A << 0.0, 0.0, 0.0; //position of first Hydrogen
+    A << atoms[0].x, atoms[0].y, atoms[0].z; //position of first Hydrogen
     Eigen::VectorXd B(3);
-    B << 0.0, 0.0, 1.4; //position of second Hydrogen along z-axis
+    B << atoms[1].x, atoms[1].y, atoms[1].z; //position of second Hydrogen along z-axis
 
     
     std::vector<Shell> shells;
@@ -182,13 +182,68 @@ MatrixXd kineticEnergy(std::vector<Shell>& shells){
     return TT;
 }
 
-void nucElec(std::vector<Shell>& shells, std::vector<Atom>& atoms){
+
+
+MatrixXd nucElec(std::vector<Shell>& shells, std::vector<Atom>& atoms){
+
+
+    MatrixXd Vnuc = MatrixXd::Zero(shells.size(), shells.size());
 
     //Compute with Fourier transform mathod
-   
+    for (int zz =0; zz < atoms.size(); zz++){ //loop over all atoms
+
+        MatrixXd t_Vnuc = MatrixXd::Zero(shells.size(), shells.size());
+
+        //compute repulsion matrix
+        for(int i = 0; i < shells.size(); i++){
+            for(int j = 0; j < shells.size(); j++){
+
+                //Need to sum over inner contractions
+                double t_tmp = 0.0;
+
+                for(int p = 0; p < shells[i].contr.size(); p++){
+                    for( int q = 0; q < shells[j].contr.size(); q++){
+
+                        double t_alpha = shells[i].alpha[p];
+                        double t_beta = shells[j].alpha[q];
+ 
+                        double tmp1 = t_alpha*t_beta/(t_alpha + t_beta);
+                        double gamma = t_alpha + t_beta;
+                        double K = exp( -1*tmp1  * (shells[i].origin - shells[j].origin).squaredNorm() );
+
+                        VectorXd Rp = (t_alpha*shells[i].origin + t_beta*shells[j].origin)/(t_alpha + t_beta);
+                        
+                        VectorXd Rc(3);
+                        Rc << atoms[zz].x, atoms[zz].y , atoms[zz].z ; 
+
+                        double n_const_1 = pow( 2*t_alpha/M_PI, 3./4.) ;
+                        double n_const_2 = pow( 2*t_beta/M_PI, 3./4.);
+
+                        double dist = (Rp - Rc).norm();
+                        
+                        if (dist == 0.0){
+                            
+                            t_tmp += -1*atoms[zz].atomic_number*n_const_1*n_const_2*shells[i].contr[p]*shells[j].contr[q]*2*K*M_PI/gamma;
+
+                        } else{
+                            t_tmp += -1*atoms[zz].atomic_number*n_const_1*n_const_2*shells[i].contr[p]*shells[j].contr[q]*K*pow(M_PI, 3./2)*erf(pow(gamma,1./2)*dist)/(pow(gamma,3./2)*dist);
+
+                        }
+
+                    }
+                }
+
+                t_Vnuc(i,j) = t_tmp;
+            }
+        }
+        cout << t_Vnuc << endl;
+        Vnuc += t_Vnuc;
+
+
+    }
+
+    return Vnuc;
 }
-
-
 
 int main(int argc, char* argv[]){
 
@@ -229,9 +284,13 @@ int main(int argc, char* argv[]){
     MatrixXd TT =kineticEnergy(shells);
 
     //Compute Nuclear-electron attraction
-    nucElec(shells, atoms);
+    MatrixXd VV = nucElec(shells, atoms);
 
+    //Core is sum of TT and VV
 
+    MatrixXd Hcore = TT + VV;
+
+    cout << Hcore << endl;
 
 
 
