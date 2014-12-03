@@ -236,14 +236,100 @@ MatrixXd nucElec(std::vector<Shell>& shells, std::vector<Atom>& atoms){
                 t_Vnuc(i,j) = t_tmp;
             }
         }
-        cout << t_Vnuc << endl;
         Vnuc += t_Vnuc;
-
-
     }
 
     return Vnuc;
 }
+
+
+
+
+MatrixXd TwoElecV(std::vector<Shell>& shells, std::vector<Atom>& atoms){
+
+    //Set up two-electron repluslion matrix. goes as r^{4}
+    MatrixXd VV = MatrixXd::Zero( pow(shells.size(),2), pow(shells.size(),2) );
+
+    //Indexing is canoncial physics notation <kl|ij>
+    
+    for(int i = 0; i < shells.size(); i++){
+        for(int j = 0; j < shells.size(); j ++){
+            for(int k = 0; k < shells.size(); k++){
+                for(int l = 0; l < shells.size(); l++){
+                    //chem notation is [ki|lj]
+                    //int,int rho{r1,p} rho{r2,q}/r12
+                    //Vpq = int Vp(r2) rho{r2,Q} dr2
+                    //express with Boys function.
+                    
+                    double t_VV = 0.0;
+
+                    //Now for each we need a contraction over all gaussians
+                    for(int p = 0; p < shells[i].alpha.size(); p++){
+                        for(int q = 0; q < shells[j].alpha.size(); q++){
+                            for(int r = 0; r < shells[k].alpha.size(); r++){
+                                for( int s = 0; s < shells[l].alpha.size(); s++){
+                                    
+                                    double t_alpha = shells[i].alpha[p];
+                                    double t_beta = shells[j].alpha[q];
+                                    double t_gamma = shells[k].alpha[r];
+                                    double t_delta = shells[l].alpha[s];
+
+                                    double Kki = exp( -1.*t_alpha*t_gamma*(shells[k].origin - shells[i].origin).squaredNorm()/(t_alpha + t_gamma) );
+
+                                    double Klj = exp( -1.*t_beta*t_delta*(shells[l].origin - shells[j].origin).squaredNorm()/(t_beta + t_delta) );
+
+                                    VectorXd Rp = (t_alpha*shells[i].origin + t_gamma*shells[k].origin)/(t_alpha + t_gamma);
+                                    VectorXd Rq = (t_beta*shells[j].origin + t_delta*shells[l].origin)/(t_beta + t_delta);
+                                    
+                                    double n__1 = pow( 2*t_alpha/M_PI, 3./4.) ;
+                                    double n__2 = pow( 2*t_beta/M_PI, 3./4.);
+                                    double n__3 = pow( 2*t_gamma/M_PI, 3./4.) ;
+                                    double n__4 = pow( 2*t_delta/M_PI, 3./4.);
+                                    
+                                    double tmp = 0.0;
+                                    //Evaluation of Boys function...
+                                    if ( (Rp-Rq).norm() == 0){
+                                        //F_{0} == 1
+                                        tmp = n__1;
+                                        tmp *= n__2*n__3*n__4;
+                                        tmp *= shells[i].contr[p]*shells[j].contr[q]*shells[k].contr[r]*shells[l].contr[s];
+                                        tmp *= 2*pow(M_PI, 5./2)*Kki*Klj/( (t_alpha+t_gamma)*(t_beta+t_delta)*pow(t_alpha+t_beta + t_gamma + t_delta,1./2) );
+                                        
+                                    } else {
+                                        tmp = n__1;
+                                        tmp *= n__2*n__3*n__4;
+                                        tmp *= shells[i].contr[p]*shells[j].contr[q]*shells[k].contr[r]*shells[l].contr[s];
+
+                                        tmp *= 2*pow(M_PI, 5./2)*Kki*Klj/( (t_alpha+t_gamma)*(t_beta+t_delta)*pow(t_alpha+t_beta + t_gamma + t_delta,1./2) );
+                                        double T = (Rp - Rq).squaredNorm()*(t_alpha+t_gamma)*(t_beta+t_delta)/(t_alpha+t_beta+t_gamma + t_delta);
+                                        tmp *= pow(M_PI/T,1./2)*erf(sqrt(T))/2.;
+                                        
+
+
+                                    }
+                                    
+                                    t_VV += tmp;
+             
+                                }
+                            }
+                        }
+                    }
+                
+                    //cout << "<kl|ij>\t" << k+1 << l+1 << i+1 << j+1 << "\t" << t_VV << endl;
+                    VV(i+ shells.size()*j, k + shells.size()*l) = t_VV;                
+                    //if ( l == 1 && k == 1 && i == 1 && j == 1 ){
+                    //    exit(0);
+                    //}
+                    //update matrix element
+
+                }
+            }
+        }
+    }
+
+    return VV;
+}
+
 
 int main(int argc, char* argv[]){
 
@@ -286,11 +372,21 @@ int main(int argc, char* argv[]){
     //Compute Nuclear-electron attraction
     MatrixXd VV = nucElec(shells, atoms);
 
+
     //Core is sum of TT and VV
 
     MatrixXd Hcore = TT + VV;
 
-    cout << Hcore << endl;
+    cout << "\t" << "Core Hamiltonian" << endl;
+    cout << "\t" << Hcore << endl;
+
+    
+    Eigen::GeneralizedSelfAdjointEigenSolver<MatrixXd> es(Hcore,SS);;
+
+    cout << "The eigenvalues of Hcore are:\n" << es.eigenvalues() << endl;
+
+    //COMPUTE 2-ELECTRON INTEGRALS
+    MatrixXd VVee = TwoElecV(shells, atoms);
 
 
 
