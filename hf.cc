@@ -2,6 +2,7 @@
 #include <fstream>
 #include <vector>
 #include <cmath>
+#include <cstdio>
 
 //DEBUGGING PACKAGES
 #include <typeinfo>
@@ -9,6 +10,7 @@
 //Eigen matrix algebra library Include Guard
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
+#include <Eigen/QR> //For orthogonalization of basis
 
 //package includes
 #include "hf.h"
@@ -40,18 +42,20 @@ std::vector<Atom> read_geometry(char* filename) {
     
         if (element_label == "H")
             Z = 1;
+        else if (element_label == "He")
+            Z = 2;
         else if (element_label == "C")
-          Z = 6;
+            Z = 6;
         else if (element_label == "N")
-          Z = 7;
+            Z = 7;
         else if (element_label == "O")
-          Z = 8;
+            Z = 8;
         else if (element_label == "F")
-          Z = 9;
+            Z = 9;
         else if (element_label == "S")
-          Z = 16;
+            Z = 16;
         else if (element_label == "Cl")
-          Z = 17;
+            Z = 17;
         else {
           std::cerr << "read_dotxyz: element label \"" << element_label << "\" is not recognized" << std::endl;
           throw "Did not recognize element label in .xyz file";
@@ -73,23 +77,40 @@ std::vector<Atom> read_geometry(char* filename) {
 
 std::vector<Shell> make_sto3g_basis(std::vector<Atom>& atoms){
 
-    //USE 3 primite Gaussians for STO-3G Look in Szabo and Ostlund for
-    //coefficients and their overlaps to test if working
-    Eigen::VectorXd alpha(3);
-    alpha << 0.168856, 0.623913, 3.42525;
-    Eigen::VectorXd contrcoef(3);;
-    contrcoef << 0.444635, 0.535328, 0.154329;
-    Eigen::VectorXd A(3);
-    A << atoms[0].x, atoms[0].y, atoms[0].z; //position of first Hydrogen
-    Eigen::VectorXd B(3);
-    B << atoms[1].x, atoms[1].y, atoms[1].z; //position of second Hydrogen along z-axis
 
-    
+    //Use switch statement to generate the contraction coefficients.  Integrals
+    //currently only handle s-orbitals
+
     std::vector<Shell> shells;
+    Eigen::VectorXd alpha(3);
+    Eigen::VectorXd contrcoef(3);
+    Eigen::VectorXd A(3);
 
-    shells.push_back( Shell{alpha, contrcoef, A } );
-    shells.push_back( Shell{alpha, contrcoef, B } );
+    for(int zz = 0; zz < atoms.size(); zz++){
 
+        switch (atoms[zz].atomic_number) {
+
+            case(1):
+                alpha << 0.16885540, 0.62391373, 3.42525091;
+                contrcoef << 0.44463454, 0.53532814, 0.15432897;
+                A << atoms[zz].x, atoms[zz].y, atoms[zz].z; //position of first Hydrogen
+                shells.push_back( Shell{alpha, contrcoef, A } );
+                //cout << "\tLoaded H atom" << endl;
+                break;
+            case(2):
+                //alpha << 0.31364979, 1.15892300, 6.36242139;
+                alpha << 0.48084429026249986, 1.7766911481187495, 9.753934615874998;
+                contrcoef << 0.44463454, 0.53532814, 0.15432897;
+                A << atoms[zz].x, atoms[zz].y, atoms[zz].z; //position of first Hydrogen
+                shells.push_back( Shell{alpha, contrcoef, A } );
+                //cout << "\tLoaded He atom" << endl;
+                break;
+            default:
+                cout << "\tSorry! Can't handle atom with atomic number " << atoms[zz].atomic_number << endl;
+ 
+        }
+
+    }
 
     return shells;
 }
@@ -331,12 +352,41 @@ MatrixXd TwoElecV(std::vector<Shell>& shells, std::vector<Atom>& atoms){
 }
 
 
+MatrixXd ConstructG(const Eigen::MatrixXd& D, const Eigen::MatrixXd& VVee){
+
+    /***********************************
+     *
+     *          Construct G-matrix
+     *
+     *
+     * ********************************/
+   
+    int L = D.rows();
+    MatrixXd G = Eigen::MatrixXd::Zero(D.rows(), D.cols());
+    for(int ii = 0; ii < D.rows(); ii++){
+        for(int jj = 0; jj < D.cols(); jj++){
+
+            for(int ll = 0; ll < L; ll++){
+                for(int ss = 0; ss < L; ss++){
+                    G(ii,jj) += D(ll,ss)*(VVee(jj + L*ss, ii + L*ll) - 0.5*VVee(ll + L*ss, ii + L*jj) );
+                }
+            }
+
+        }
+    }
+
+    return G;
+
+}
+
 int main(int argc, char* argv[]){
 
     //const auto filename = (argc > 1) ? argv[1] : "h2o.xyz";
     char* filename = argv[1];
 
     std::vector<Atom> atoms = read_geometry(filename);
+
+    const int bas_dim = atoms.size();
 
     //Get Number of Electrons
     int nelectron = 0;
@@ -358,39 +408,159 @@ int main(int argc, char* argv[]){
             enuc += atoms[i].atomic_number * atoms[j].atomic_number / r;
         }
     }
-    cout << "\tNuclear repulsion energy = " << enuc << endl;
+    //cout << "\tNuclear repulsion energy = " << enuc << endl;
 
     //GENERATE BASIS
     std::vector<Shell> shells = make_sto3g_basis(atoms); 
 
     //COMPUTE OVERLAPS
     MatrixXd SS = overlap(shells);
+    
+    cout << "\n\n\tOverlap Matrix" << endl;
+     for(int i = 0; i < bas_dim; i++){
+        for(int j = i; j < bas_dim; j++){
+            cout << "\t<" << j << "|" << i <<
+                "> =\t" << SS(i,j) << endl;
+        }
+    }
+    
 
     //Compute Kinetic Energy
     MatrixXd TT =kineticEnergy(shells);
 
+    
+    cout << "\n\n\tKinetic Energy Matrix" << endl;
+    for(int i = 0; i < bas_dim; i++){
+        for(int j = i; j < bas_dim; j++){
+            cout << "\t<" << j << "|" << i <<
+                "> =\t" << TT(i,j) << endl;
+        }
+    }
+ 
     //Compute Nuclear-electron attraction
     MatrixXd VV = nucElec(shells, atoms);
 
-
     //Core is sum of TT and VV
-
     MatrixXd Hcore = TT + VV;
 
-    cout << "\t" << "Core Hamiltonian" << endl;
-    cout << "\t" << Hcore << endl;
-
-    
-    Eigen::GeneralizedSelfAdjointEigenSolver<MatrixXd> es(Hcore,SS);;
-
-    cout << "The eigenvalues of Hcore are:\n" << es.eigenvalues() << endl;
 
     //COMPUTE 2-ELECTRON INTEGRALS
     MatrixXd VVee = TwoElecV(shells, atoms);
 
+    int L = Hcore.rows();
 
+    cout << "\n\n\tTwo Electron Integrals" << endl;
+    for(int i = 0; i < L; i++){
+        for(int j = i; j < L; j++){
+            for(int k = 0; k < L; k++){
+                for(int l = k; l < L; l++){
+         
+            cout << "\t<" << i << "," << j << "|" << 
+                k << "," << l << "> =\t" <<  
+                VVee(i+L*j,k+L*l) << endl;  
+                }
+            }
+        }
+    }
+        
+    
+
+    /**************************************************
+     *              SCF Procedure
+     *  1) generate orthogonalization matrix
+     *  2) generate guess density.  Use Overlap matrix
+     *  3) Build Fock Matrix
+     *  4) transform Fock matrix
+     *  5) diagonalize to get new orthonormal set.
+     *  6) transform back to AO basis
+     *  7) generate AO density
+     *  8) check convergence go back to 3.
+     **************************************************/
+
+          
+    ////Do symmetric orthogonalization by default 
+    ////If eigenvalues below threshold Psi4 uses 1.0E-4 then use canonical
+    ////orthogonalization (1.0E-7)
+    ////
+    Eigen::SelfAdjointEigenSolver<MatrixXd> eigenss(SS);
+
+    MatrixXd ssqrt = MatrixXd::Zero(eigenss.eigenvectors().rows(), eigenss.eigenvectors().cols() );
+
+    for(int ii =0; ii < eigenss.eigenvectors().rows(); ii++)
+        ssqrt(ii,ii) += pow(eigenss.eigenvalues()[ii], -0.5);
+
+    MatrixXd X = eigenss.eigenvectors()*ssqrt;
+
+    //
+    ////Eigenvalues from solver sorted in increasing order Find all eigenvalues
+    ////below 1.0E-7
+   
+    //int count = 0;
+    //for(int ii =0; ii < eigenss.eigenvalues().size(); ii++)
+    //    if (eigenss.eigenvalues()[ii] <= 1.0e-7) count += 1;
+    //
+    ////count is the number of eigenvalues less than cutoff. 
+    //cout << count << endl;
+    //
+    //exit(0);
+
+
+    //Generate Guess from core matrix
+
+    MatrixXd F_prime = X.transpose()*Hcore*X;
+
+    //Now solve for c' and epislon
+
+    Eigen::SelfAdjointEigenSolver<MatrixXd> eigensolver(F_prime);
+
+    MatrixXd C = X*eigensolver.eigenvectors();
+
+
+    //Now form atomic orbital density matrix
+    MatrixXd D = 2*C.leftCols(nelectron/2)*(C.leftCols(nelectron/2).transpose());
+
+    MatrixXd G = ConstructG(D, VVee);
+
+
+    MatrixXd Dold = D;
+
+   
+    int max_iter = 10000;
+    int counter = 0;
+    double energy = 0.0;
+    while(counter < max_iter){
+
+        Eigen::SelfAdjointEigenSolver<MatrixXd> eigensolver(X.transpose()*(Hcore + G)*X);
+        C = X*eigensolver.eigenvectors();
+        D = 2*C.leftCols(nelectron/2)*C.leftCols(nelectron/2).transpose();
+        
+        //cout << "\t Density matrix norm " << (Dold - D).norm() << endl;
+
+        //calculate energy
+        for(int ii = 0; ii < Hcore.rows(); ii++){
+            for(int jj = 0; jj < Hcore.cols(); jj++){
+                energy += 0.5*D(ii,jj)*(2*Hcore(ii,jj) + G(ii,jj));
+            }
+        }
+
+        //cout << "\tEnergy " << energy + enuc << endl;
+        //cout << "\t P11 P12 P22\t" << D(0,0) << " " << D(0,1) << " " << D(1,1) << endl;
+
+        if ( (Dold - D).norm() <= 1.e-8 ){
+            cout << "\n\n\tSCF steps =\t" << counter << endl;
+            cout << "\tNuclear Energy =\t" << enuc << endl;
+            cout << "\tElectronic Energy =\t" << energy << endl;
+            cout << "\tTotal Energy =\t" << energy + enuc << "\n" <<endl;
+            break;
+        }
+
+        energy = 0.0;
+        Dold = D;
+
+        G = ConstructG(D, VVee);
+        counter += 1;
+
+
+    }
 
 }
-
-
-
