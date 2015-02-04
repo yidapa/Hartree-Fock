@@ -85,6 +85,7 @@ std::vector<Shell> make_sto3g_basis(std::vector<Atom>& atoms){
     Eigen::VectorXd alpha(3);
     Eigen::VectorXd contrcoef(3);
     Eigen::VectorXd A(3);
+    Shell tmp;
 
     for(int zz = 0; zz < atoms.size(); zz++){
 
@@ -94,7 +95,10 @@ std::vector<Shell> make_sto3g_basis(std::vector<Atom>& atoms){
                 alpha << 0.16885540, 0.62391373, 3.42525091;
                 contrcoef << 0.44463454, 0.53532814, 0.15432897;
                 A << atoms[zz].x, atoms[zz].y, atoms[zz].z; //position of first Hydrogen
-                shells.push_back( Shell{alpha, contrcoef, A } );
+                tmp.alpha = alpha;
+                tmp.contr = contrcoef;
+                tmp.origin = A;
+                shells.push_back( tmp );
                 //cout << "\tLoaded H atom" << endl;
                 break;
             case(2):
@@ -102,7 +106,10 @@ std::vector<Shell> make_sto3g_basis(std::vector<Atom>& atoms){
                 alpha << 0.48084429026249986, 1.7766911481187495, 9.753934615874998;
                 contrcoef << 0.44463454, 0.53532814, 0.15432897;
                 A << atoms[zz].x, atoms[zz].y, atoms[zz].z; //position of first Hydrogen
-                shells.push_back( Shell{alpha, contrcoef, A } );
+                tmp.alpha = alpha;
+                tmp.contr = contrcoef;
+                tmp.origin = A;
+                shells.push_back( tmp );
                 //cout << "\tLoaded He atom" << endl;
                 break;
             default:
@@ -337,7 +344,7 @@ MatrixXd TwoElecV(std::vector<Shell>& shells, std::vector<Atom>& atoms){
                     }
                 
                     //cout << "<kl|ij>\t" << k+1 << l+1 << i+1 << j+1 << "\t" << t_VV << endl;
-                    VV(i+ shells.size()*j, k + shells.size()*l) = t_VV;                
+                    VV(i*shells.size()+ j, k*shells.size() + l) = t_VV;                
                     //if ( l == 1 && k == 1 && i == 1 && j == 1 ){
                     //    exit(0);
                     //}
@@ -363,15 +370,19 @@ MatrixXd ConstructG(const Eigen::MatrixXd& D, const Eigen::MatrixXd& VVee){
    
     int L = D.rows();
     MatrixXd G = Eigen::MatrixXd::Zero(D.rows(), D.cols());
-    for(int ii = 0; ii < D.rows(); ii++){
-        for(int jj = 0; jj < D.cols(); jj++){
+    for(int ii = 0; ii < D.rows(); ii++){ //row el1
+        for(int jj = 0; jj < D.cols(); jj++){ //col el1 
+            //printf("G_{%i}^{%i}\n",ii,jj);
+            for(int rr = 0; rr < D.rows(); rr++){  //row el2
+                for(int ss = 0; ss < D.cols(); ss++){ //col el2
+                     
+                    //G(ii,jj) += D(ss,rr)*(VVee(ii*L + rr, jj*L + ss) - 0.5*VVee(rr*L + ii, jj*L + ss) );
+                    G(ii,jj) += D(rr,ss)*(VVee(ii*L + ss, jj*L + rr) - 0.5*VVee(ss*L + ii, jj*L + rr) );
 
-            for(int ll = 0; ll < L; ll++){
-                for(int ss = 0; ss < L; ss++){
-                    G(ii,jj) += D(ll,ss)*(VVee(jj + L*ss, ii + L*ll) - 0.5*VVee(ll + L*ss, ii + L*jj) );
+
                 }
             }
-
+        //std::cout << G << endl;
         }
     }
 
@@ -418,12 +429,15 @@ int main(int argc, char* argv[]){
     
     cout << "\n\n\tOverlap Matrix" << endl;
      for(int i = 0; i < bas_dim; i++){
-        for(int j = i; j < bas_dim; j++){
+        for(int j = 0; j < bas_dim; j++){
             cout << "\t<" << j << "|" << i <<
                 "> =\t" << SS(i,j) << endl;
         }
     }
     
+    Eigen::IOFormat HeavyFmt(15,0,",",",\n", "[", "]", "[","]");
+    cout << SS.format(HeavyFmt) << endl;
+
 
     //Compute Kinetic Energy
     MatrixXd TT =kineticEnergy(shells);
@@ -436,9 +450,22 @@ int main(int argc, char* argv[]){
                 "> =\t" << TT(i,j) << endl;
         }
     }
- 
+
+    cout << TT.format(HeavyFmt) << endl;
+
     //Compute Nuclear-electron attraction
     MatrixXd VV = nucElec(shells, atoms);
+    cout << "\n\n\tPotential Matrix" << endl;
+    for(int i = 0; i < bas_dim; i++){
+        for(int j = i; j < bas_dim; j++){
+            cout << "\t<" << j << "|" << i <<
+                "> =\t" << VV(i,j) << endl;
+        }
+    }
+ 
+    cout << VV.format(HeavyFmt) << endl;
+
+
 
     //Core is sum of TT and VV
     MatrixXd Hcore = TT + VV;
@@ -446,18 +473,23 @@ int main(int argc, char* argv[]){
 
     //COMPUTE 2-ELECTRON INTEGRALS
     MatrixXd VVee = TwoElecV(shells, atoms);
+    cout << "\n" << VVee.format(HeavyFmt) << endl;
+
+    
 
     int L = Hcore.rows();
 
     cout << "\n\n\tTwo Electron Integrals" << endl;
     for(int i = 0; i < L; i++){
-        for(int j = i; j < L; j++){
+        for(int j = 0; j < L; j++){
             for(int k = 0; k < L; k++){
-                for(int l = k; l < L; l++){
+                for(int l = 0; l < L; l++){
          
-            cout << "\t<" << i << "," << j << "|" << 
-                k << "," << l << "> =\t" <<  
-                VVee(i+L*j,k+L*l) << endl;  
+            cout << "\t<" << k << "," << l << "|" << 
+                i << "," << j << "> =\t" <<  
+                VVee(i*L+j,k*L+l) << 
+                "\t[" << k << "," <<  i << "|" << l << "," << 
+                j << "] =\t" << VVee(i*L+j,k*L+l) << endl;  
                 }
             }
         }
@@ -519,10 +551,14 @@ int main(int argc, char* argv[]){
     //Now form atomic orbital density matrix
     MatrixXd D = 2*C.leftCols(nelectron/2)*(C.leftCols(nelectron/2).transpose());
 
+    cout << "\n\tInitial Density\n" << D << endl;
+
+
     MatrixXd G = ConstructG(D, VVee);
 
 
     MatrixXd Dold = D;
+
 
    
     int max_iter = 10000;
